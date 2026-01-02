@@ -2,6 +2,8 @@
 
 A TUI for managing work via Fizzy and Git worktrees with automatic database cloning for Rails projects.
 
+![Main Screen](screenshots/main-screen.png)
+
 ## Installation
 
 ### Arch Linux (AUR)
@@ -64,9 +66,14 @@ alias ht="bun ~/path/to/hatchet/src/main.ts"
 ## Features
 
 - Create, switch, and remove Git worktrees
+- Launch multiple tools (Opencode, NeoVim, Terminal) in your worktree
 - Automatic SQLite database cloning for Rails projects
 - Copies environment files (`.env.local`, `config/master.key`, etc.)
 - Fizzy integration for task management (via [fizzy-cli](https://github.com/robzolkos/fizzy-cli))
+
+### Deleting Worktrees
+
+![Delete Worktree](screenshots/delete-worktree.gif)
 
 ## Fizzy Integration
 
@@ -75,8 +82,25 @@ Hatchet integrates with [Fizzy](https://fizzy.do) for task management. To use Fi
 Once configured, Hatchet can:
 - Display your Fizzy boards and cards
 - Create worktrees directly from Fizzy cards
-- Link worktrees to tasks for easy context switching
+- Change worktrees for easy context switching
 - Seed Opencode sessions with Fizzy card details
+
+### Create Worktrees from Fizzy Cards
+With `fizzy-cli`, you're able to create worktrees directly from cards in Fizzy without leaving Hatchet.
+
+![Create Worktree from Card](screenshots/create-worktree-from-card.gif)
+
+![Fizzy Columns](screenshots/fizzy-columns.png)
+
+![Fizzy Card List](screenshots/fizzy-card-list.png)
+
+### Load Context from Fizzy
+
+When a worktree is created from Fizzy, you'll be given the option to include the contents of the card when launching OpenCode to assist in getting you started even faster!
+
+![Fizzy Context Option](screenshots/fizzy-context-option.png)
+
+![OpenCode Prompt](screenshots/opencode.png)
 
 ## Rails Database Cloning
 
