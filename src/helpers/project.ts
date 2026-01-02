@@ -8,6 +8,7 @@
 import * as path from "path";
 import * as fs from "fs";
 import { hasSqliteDatabases, cloneDatabases, getDatabaseSummary } from "./database";
+import { loadConfig } from "./config";
 
 export type ProjectType = "rails" | "node" | "bun" | "unknown";
 
@@ -78,9 +79,17 @@ export function runPostWorktreeHooks(
   worktreePath: string
 ): PostWorktreeResult {
   const projectInfo = detectProjectType(repoRoot);
+  const config = loadConfig(repoRoot);
   
   // For Rails projects with SQLite databases, clone them directly
+  // (unless skipDatabaseCopy is enabled in config)
   if (projectInfo.type === "rails" && projectInfo.hasDatabases) {
+    if (config.skipDatabaseCopy) {
+      return {
+        success: true,
+        message: "Database copying skipped (disabled in config)",
+      };
+    }
     return cloneSqliteDatabases(repoRoot, worktreePath);
   }
   
@@ -154,6 +163,13 @@ export function copyWorktreeFiles(
   repoRoot: string,
   worktreePath: string
 ): string[] {
+  const config = loadConfig(repoRoot);
+  
+  // Skip if disabled in config
+  if (config.skipEnvCopy) {
+    return [];
+  }
+  
   const copied: string[] = [];
   
   // Files to copy if they exist (and are gitignored)

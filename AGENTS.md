@@ -12,6 +12,7 @@ This document contains important patterns and conventions for developing the `ha
 - `src/helpers/image.ts` - Image extraction and placeholders
 - `src/helpers/terminal.ts` - Terminal launcher utilities
 - `src/helpers/card-tile.ts` - Fizzy card tile component
+- `src/helpers/config.ts` - Configuration file loading
 - `src/theme.ts` - Color theming system
 - `src/types.ts` - TypeScript type definitions
 
@@ -223,3 +224,37 @@ exec "./bin/rails", "server", "-p", port.to_s, *ARGV
 ```
 
 This way each worktree automatically gets the next available port (3000, 3001, 3002, etc.) without conflicts.
+
+## Configuration
+
+Hatchet supports configuration via JSONC files (JSON with comments). Config is loaded from:
+
+1. `.hatchet.jsonc` in the project folder (repo root) - project-specific
+2. `~/.config/hatchet/config.jsonc` - global config
+
+Project config takes precedence over global config.
+
+### Available Options
+
+```jsonc
+{
+  // Skip copying SQLite databases when creating worktrees
+  "skipDatabaseCopy": false,
+  // Skip copying environment files (.env.local, master.key, etc.)
+  "skipEnvCopy": false
+}
+```
+
+### Config Module
+
+The config loading logic is in `src/helpers/config.ts`:
+
+```typescript
+import { loadConfig, getConfigValue } from "./config";
+
+// Load full config
+const config = loadConfig("/path/to/repo");
+
+// Get a specific value
+const skipDb = getConfigValue("/path/to/repo", "skipDatabaseCopy");
+```

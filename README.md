@@ -198,3 +198,23 @@ Each worktree automatically gets the next available port (3000, 3001, 3002, etc.
 When running multiple worktrees on different ports, they share the same session cookie (same localhost domain). Logging into one worktree logs you out of another.
 
 **Solution**: Use separate browser profiles or private/incognito windows for each worktree.
+
+## Configuration
+
+Hatchet supports configuration via JSONC files (JSON with comments). Config is loaded from:
+
+1. `.hatchet.jsonc` in the project folder (repo root) - project-specific
+2. `~/.config/hatchet/config.jsonc` - global config
+
+Project config takes precedence over global config.
+
+### Available Options
+
+```jsonc
+{
+  // Skip copying SQLite databases when creating worktrees
+  "skipDatabaseCopy": false,
+  // Skip copying environment files (.env.local, master.key, etc.)
+  "skipEnvCopy": false
+}
+```
