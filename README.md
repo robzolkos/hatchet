@@ -21,10 +21,44 @@ bun install
 bun hatchet
 ```
 
-Optionally, add an alias to your shell config:
+### Shell Alias
+
+Add an `ht` alias for quick access:
+
+#### Bash
+
+Add to `~/.bashrc`:
 
 ```bash
-alias hatchet="bun ~/path/to/hatchet/src/main.ts"
+alias ht="hatchet"
+```
+
+#### Zsh
+
+Add to `~/.zshrc`:
+
+```bash
+alias ht="hatchet"
+```
+
+#### Fish
+
+Create `~/.config/fish/conf.d/hatchet.fish`:
+
+```fish
+alias ht="hatchet"
+```
+
+#### From Source
+
+If running from source, point the alias to bun:
+
+```bash
+# Bash/Zsh
+alias ht="bun ~/path/to/hatchet/src/main.ts"
+
+# Fish (~/.config/fish/conf.d/hatchet.fish)
+alias ht="bun ~/path/to/hatchet/src/main.ts"
 ```
 
 ## Features
@@ -32,7 +66,17 @@ alias hatchet="bun ~/path/to/hatchet/src/main.ts"
 - Create, switch, and remove Git worktrees
 - Automatic SQLite database cloning for Rails projects
 - Copies environment files (`.env.local`, `config/master.key`, etc.)
-- Fizzy integration for task management
+- Fizzy integration for task management (via [fizzy-cli](https://github.com/robzolkos/fizzy-cli))
+
+## Fizzy Integration
+
+Hatchet integrates with [Fizzy](https://fizzy.do) for task management. To use Fizzy features, install [fizzy-cli](https://github.com/robzolkos/fizzy-cli) and run `fizzy setup`.
+
+Once configured, Hatchet can:
+- Display your Fizzy boards and cards
+- Create worktrees directly from Fizzy cards
+- Link worktrees to tasks for easy context switching
+- Seed Opencode sessions with Fizzy card details
 
 ## Rails Database Cloning
 
@@ -44,8 +88,6 @@ When creating a worktree in a Rails project with SQLite, Hatchet automatically:
    - Multi-tenant databases with `%{tenant}` patterns
    - WAL and SHM files for consistency
 3. Copies everything to the new worktree
-
-**No rake tasks or bin scripts required!** Just having a `database.yml` with SQLite is enough.
 
 ### Supported database.yml Patterns
 
@@ -115,7 +157,3 @@ Each worktree automatically gets the next available port (3000, 3001, 3002, etc.
 When running multiple worktrees on different ports, they share the same session cookie (same localhost domain). Logging into one worktree logs you out of another.
 
 **Solution**: Use separate browser profiles or private/incognito windows for each worktree.
-
-## License
-
-MIT
