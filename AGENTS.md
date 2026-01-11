@@ -13,8 +13,10 @@ This document contains important patterns and conventions for developing the `ha
 - `src/helpers/terminal.ts` - Terminal launcher utilities
 - `src/helpers/card-tile.ts` - Fizzy card tile component
 - `src/helpers/config.ts` - Configuration file loading
+- `src/helpers/cli.ts` - CLI argument parsing (yargs)
 - `src/theme.ts` - Color theming system
 - `src/types.ts` - TypeScript type definitions
+- `scripts/install-protocol-handler.sh` - Protocol handler installer (Linux)
 
 ## OpenTUI Key Event Handling
 
@@ -111,7 +113,7 @@ const ICONS = {
 ## Running and Testing
 
 ```bash
-# Run the app
+# Run the app (TUI mode)
 bun hatchet
 
 # Type check (ignore known issues in unused files)
@@ -119,6 +121,103 @@ npx tsc --noEmit 2>&1 | grep -v "src/app.ts\|src/views/"
 
 # Toggle console for debugging (in app)
 Press ` (backtick)
+```
+
+## Command-Line Interface
+
+Hatchet supports both interactive TUI mode and non-interactive CLI mode.
+
+### CLI Options
+
+```bash
+hatchet [options]
+
+Options:
+  -c, --card <number>    Fizzy card number to create/switch worktree for
+  -p, --path <dir>       Path to git repository (required for protocol handler)
+  -o, --launch-opencode  Launch OpenCode in the worktree after creation
+      --with-context     Include card context in OpenCode prompt (requires -o)
+  -l, --list             List worktrees and exit
+  -h, --help             Show help
+  -v, --version          Show version
+```
+
+### Examples
+
+```bash
+# Launch interactive TUI
+hatchet
+
+# Create/switch to worktree for card #123
+hatchet --card 123
+
+# Create worktree and launch OpenCode
+hatchet --card 123 --launch-opencode
+hatchet -c 123 -o
+
+# Create worktree and launch OpenCode with card context in prompt
+hatchet --card 123 --launch-opencode --with-context
+hatchet -c 123 -o --with-context
+
+# Work with a specific repo (useful for protocol handler)
+hatchet --card 123 --path /home/user/myproject --launch-opencode
+
+# List all worktrees
+hatchet --list
+```
+
+## Protocol Handler (Linux)
+
+Hatchet can be registered as a protocol handler for `hatchet://` URLs, allowing browser links to trigger worktree creation.
+
+### Installation
+
+```bash
+./scripts/install-protocol-handler.sh
+```
+
+This creates a `.desktop` file and registers Hatchet as the handler for `hatchet://` URLs.
+
+### URL Format
+
+```
+hatchet://card/<number>?path=<repo-path>&launch-opencode=true&with-context=true
+```
+
+**Parameters:**
+- `card/<number>` - The Fizzy card number (required)
+- `path` - Absolute path to the git repository (required)
+- `launch-opencode` - Set to `true` to launch OpenCode after creation
+- `with-context` - Set to `true` to include card details in OpenCode prompt
+
+### URL Examples
+
+```
+# Just create/switch to worktree
+hatchet://card/123?path=/home/user/myproject
+
+# Create and launch OpenCode
+hatchet://card/123?path=/home/user/myproject&launch-opencode=true
+
+# Create, launch OpenCode, and include card context
+hatchet://card/123?path=/home/user/myproject&launch-opencode=true&with-context=true
+```
+
+### Testing
+
+```bash
+# Test the protocol handler
+xdg-open 'hatchet://card/123?path=/home/user/myproject'
+```
+
+### Integration with Fizzy
+
+To add "Open in Hatchet" links to your Fizzy board, you can create links like:
+
+```html
+<a href="hatchet://card/123?path=/home/user/myproject&launch-opencode=true&with-context=true">
+  Open in Hatchet
+</a>
 ```
 
 ## Project Detection and Database Cloning
@@ -241,7 +340,9 @@ Project config takes precedence over global config.
   // Skip copying SQLite databases when creating worktrees
   "skipDatabaseCopy": false,
   // Skip copying environment files (.env.local, master.key, etc.)
-  "skipEnvCopy": false
+  "skipEnvCopy": false,
+  // Default model to use when launching OpenCode (format: provider/model)
+  "opencodeModel": "opencode/claude-opus-4-5"
 }
 ```
 

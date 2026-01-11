@@ -1,0 +1,217 @@
+/* Hatchet for Fizzy - Content Script Styles */
+
+/* Hatchet button wrapper */
+.hatchet-btn-wrapper {
+  display: inline-flex;
+}
+
+/* Hatchet button - matches Fizzy's btn style */
+.hatchet-btn {
+  position: relative;
+}
+
+/* Hatchet icon using CSS mask to match Fizzy's icon system */
+.icon.hatchet-icon {
+  /* Lucide Axe icon as data URI */
+  --icon-url: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m14 12-8.381 8.38a1 1 0 0 1-3.001-3L11 9'/%3E%3Cpath d='M15 15.5a.5.5 0 0 0 .5.5A6.5 6.5 0 0 0 22 9.5a.5.5 0 0 0-.5-.5h-1.672a2 2 0 0 1-1.414-.586l-5.062-5.062a1.205 1.205 0 0 0-1.704 0L9.352 5.648a1.205 1.205 0 0 0 0 1.704l5.062 5.062A2 2 0 0 1 15 13.828z'/%3E%3C/svg%3E");
+  -webkit-mask-image: var(--icon-url);
+  mask-image: var(--icon-url);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  background-color: currentColor;
+}
+
+.hatchet-btn:hover {
+  background-color: var(--color-accent-alpha-10, rgba(99, 102, 241, 0.1));
+}
+
+/* Modal overlay */
+.hatchet-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  animation: hatchet-fade-in 0.15s ease-out;
+}
+
+@keyframes hatchet-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Modal */
+.hatchet-modal {
+  background: var(--color-surface, #fff);
+  border-radius: 8px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+  width: 90%;
+  max-width: 480px;
+  animation: hatchet-slide-up 0.15s ease-out;
+}
+
+@keyframes hatchet-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.hatchet-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--color-border, #e5e7eb);
+}
+
+.hatchet-modal-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-text, #111827);
+}
+
+.hatchet-modal-close {
+  background: none;
+  border: none;
+  font-size: 24px;
+  color: var(--color-text-muted, #6b7280);
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
+.hatchet-modal-close:hover {
+  color: var(--color-text, #111827);
+}
+
+.hatchet-modal-body {
+  padding: 20px;
+}
+
+.hatchet-modal-body p {
+  margin: 0 0 12px 0;
+  color: var(--color-text, #111827);
+}
+
+.hatchet-modal-body strong {
+  color: var(--color-accent, #6366f1);
+}
+
+.hatchet-path-input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border, #d1d5db);
+  border-radius: 6px;
+  font-size: 14px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  background: var(--color-surface, #fff);
+  color: var(--color-text, #111827);
+  box-sizing: border-box;
+}
+
+.hatchet-path-input:focus {
+  outline: none;
+  border-color: var(--color-accent, #6366f1);
+  box-shadow: 0 0 0 3px var(--color-accent-alpha-20, rgba(99, 102, 241, 0.2));
+}
+
+.hatchet-path-input.hatchet-input-error {
+  border-color: #ef4444;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.2);
+}
+
+.hatchet-hint {
+  font-size: 12px;
+  color: var(--color-text-muted, #6b7280);
+  margin-top: 8px !important;
+}
+
+.hatchet-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 16px 20px;
+  border-top: 1px solid var(--color-border, #e5e7eb);
+}
+
+.hatchet-btn-cancel,
+.hatchet-btn-save {
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.hatchet-btn-cancel {
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border, #d1d5db);
+  color: var(--color-text, #374151);
+}
+
+.hatchet-btn-cancel:hover {
+  background: var(--color-surface-hover, #f9fafb);
+}
+
+.hatchet-btn-save {
+  background: var(--color-accent, #6366f1);
+  border: 1px solid var(--color-accent, #6366f1);
+  color: #fff;
+}
+
+.hatchet-btn-save:hover {
+  background: var(--color-accent-hover, #4f46e5);
+  border-color: var(--color-accent-hover, #4f46e5);
+}
+
+/* Toast notification */
+.hatchet-toast {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  padding: 12px 20px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  z-index: 10001;
+  opacity: 0;
+  transform: translateY(10px);
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.hatchet-toast--visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.hatchet-toast--info {
+  background: var(--color-accent, #6366f1);
+  color: #fff;
+}
+
+.hatchet-toast--error {
+  background: #ef4444;
+  color: #fff;
+}
+
+.hatchet-toast--success {
+  background: #10b981;
+  color: #fff;
+}

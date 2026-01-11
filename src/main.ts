@@ -25,6 +25,9 @@ import {
   type ImageInfo 
 } from "./helpers/image";
 import * as terminal from "./helpers/terminal";
+import { parseArgs, type CliOptions } from "./helpers/cli";
+import { loadConfig } from "./helpers/config";
+import { execSync } from "child_process";
 
 // Helper to clear all children from a renderable (no removeAll() in OpenTUI)
 function clearChildren(parent: Renderable): void {
@@ -488,12 +491,143 @@ let fizzyAuthenticated = false;
 // Track last created branch to select it when returning to main view
 let lastCreatedBranch: string | null = null;
 
-async function main() {
-  // Check if we're in a git repo
-  if (!git.inGitRepo()) {
-    console.error("Error: Not a git repository");
+// ============================================================================
+// Non-Interactive CLI Functions
+// ============================================================================
+
+/**
+ * List worktrees in CLI format (non-interactive)
+ */
+function listWorktreesCli(): void {
+  const wts = git.worktrees();
+  if (wts.length === 0) {
+    console.log("No worktrees found.");
+    return;
+  }
+
+  console.log("Worktrees:");
+  for (const wt of wts) {
+    const isMain = git.isMainWorktree(wt.path);
+    const marker = isMain ? " (main)" : "";
+    console.log(`  ${wt.branch}${marker}`);
+    console.log(`    ${wt.path}`);
+  }
+}
+
+/**
+ * Process a Fizzy card directly (non-interactive)
+ * Creates/switches to worktree and optionally launches OpenCode
+ */
+function processCardDirect(cardNumber: number, options: { launchOpencode?: boolean; withContext?: boolean }): void {
+  // Check Fizzy auth
+  if (!fizzy.isAuthenticated()) {
+    console.error("Error: Not authenticated with Fizzy. Run 'fizzy auth login' first.");
     process.exit(1);
   }
+
+  // Fetch card
+  const card = fizzy.fetchCard(cardNumber);
+  if (!card) {
+    console.error(`Error: Card #${cardNumber} not found.`);
+    process.exit(1);
+  }
+
+  // Generate branch name
+  const branchName = fizzy.branchFromCard(card, cardNumber);
+  let worktreePath: string;
+
+  // Check if worktree exists
+  if (git.worktreeExists(branchName)) {
+    worktreePath = git.worktreePath(branchName)!;
+    console.log(`Worktree already exists: ${worktreePath}`);
+  } else {
+    // Create worktree
+    console.log(`Creating worktree for card #${cardNumber}: ${card.title}`);
+    const result = git.createWorktree(branchName);
+    worktreePath = result.path;
+    console.log(`Created: ${worktreePath}`);
+
+    if (result.projectInfo.hasDatabases) {
+      console.log(`  ${result.postHooks.message}`);
+    }
+    if (result.copiedFiles.length > 0) {
+      console.log(`  Copied: ${result.copiedFiles.join(", ")}`);
+    }
+  }
+
+  // Launch OpenCode if requested
+  if (options.launchOpencode) {
+    // Load config to check for default model
+    const repoRoot = git.repoRoot();
+    const config = loadConfig(repoRoot);
+    
+    // Build opencode args
+    const opencodeArgs: string[] = [];
+    
+    // Add model if configured
+    if (config.opencodeModel) {
+      opencodeArgs.push("--model", config.opencodeModel);
+    }
+    
+    // Add prompt if context requested
+    if (options.withContext) {
+      const prompt = fizzy.generateInitialPrompt(card, cardNumber);
+      opencodeArgs.push("--prompt", prompt);
+    }
+    
+    // Change to worktree dir and launch opencode
+    process.chdir(worktreePath);
+    
+    const { spawnSync } = require("child_process");
+    spawnSync("opencode", opencodeArgs, { stdio: "inherit" });
+  }
+}
+
+// ============================================================================
+// Main Entry Point
+// ============================================================================
+
+async function main() {
+  // Parse CLI arguments first
+  const options = await parseArgs();
+
+  // Handle --path: change to specified directory
+  if (options.path) {
+    try {
+      process.chdir(options.path);
+    } catch {
+      console.error(`Error: Cannot access path: ${options.path}`);
+      process.exit(1);
+    }
+  }
+
+  // Check git repo (after potential chdir)
+  if (!git.inGitRepo()) {
+    console.error("Error: Not a git repository");
+    if (options.path) {
+      console.error(`  Path: ${options.path}`);
+    }
+    process.exit(1);
+  }
+
+  // Non-interactive: list worktrees
+  if (options.list) {
+    listWorktreesCli();
+    process.exit(0);
+  }
+
+  // Non-interactive: process card directly
+  if (options.card) {
+    processCardDirect(options.card, {
+      launchOpencode: options.launchOpencode,
+      withContext: options.withContext,
+    });
+    process.exit(0);
+  }
+
+  // ========================================================================
+  // Interactive TUI mode (existing behavior)
+  // ========================================================================
 
   // Check Fizzy authentication status once at startup
   fizzyAuthenticated = fizzy.isAuthenticated();

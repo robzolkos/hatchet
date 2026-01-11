@@ -17,6 +17,8 @@ export interface HatchetConfig {
   skipDatabaseCopy?: boolean;
   /** Skip copying environment files (.env.local, master.key, etc.) when creating worktrees */
   skipEnvCopy?: boolean;
+  /** Default model to use when launching OpenCode (format: provider/model, e.g., "anthropic/claude-sonnet-4-20250514") */
+  opencodeModel?: string;
 }
 
 const DEFAULT_CONFIG: HatchetConfig = {
