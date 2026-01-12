@@ -33,7 +33,7 @@ jobs:
           url="https://github.com/ryanrhughes/hatchet"
           license=('MIT')
           depends=('fizzy-cli')
-          makedepends=('bun-bin')
+          makedepends=('bun')
           options=('!debug' '!strip')
           source=("\$pkgname-\$pkgver.tar.gz::https://github.com/ryanrhughes/hatchet/archive/v\$pkgver.tar.gz")
           sha256sums=('${SHA256}')
