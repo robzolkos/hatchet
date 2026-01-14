@@ -13,9 +13,11 @@ import {
   type CliRenderer,
   type Renderable,
 } from "@opentui/core";
-import type { FizzyCard } from "./types";
+import type { FizzyCard, GitHubPR } from "./types";
 import * as git from "./helpers/git";
 import * as fizzy from "./helpers/fizzy";
+import * as github from "./helpers/github";
+import { createPRTile } from "./helpers/pr-tile";
 import { Theme, detectPalette, getFizzyColor, getFizzyColorDimmed } from "./theme";
 import { renderHtml } from "./helpers/html";
 import { createCardTile } from "./helpers/card-tile";
@@ -475,7 +477,7 @@ function createBackTile(renderer: CliRenderer, selected: boolean): BoxRenderable
 }
 
 // Track current view for navigation
-type ViewType = "main" | "create" | "fizzy-boards" | "fizzy-columns" | "fizzy-cards" | "confirm" | "switch-confirm" | "delete-confirm";
+type ViewType = "main" | "create" | "fizzy-boards" | "fizzy-columns" | "fizzy-cards" | "github-prs" | "confirm" | "switch-confirm" | "pr-switch-confirm" | "delete-confirm";
 let currentView: ViewType = "main";
 // Flag to prevent operations during view transitions
 let isTransitioning = false;
@@ -488,6 +490,9 @@ let boardManuallySelected = false;
 
 // Fizzy authentication status (checked once at startup)
 let fizzyAuthenticated = false;
+
+// GitHub authentication status (checked once at startup)
+let githubAuthenticated = false;
 
 // Track last created branch to select it when returning to main view
 let lastCreatedBranch: string | null = null;
@@ -584,6 +589,79 @@ function processCardDirect(cardNumber: number, options: { launchOpencode?: boole
   }
 }
 
+/**
+ * Process a GitHub PR directly (non-interactive)
+ * Creates/switches to worktree and optionally launches OpenCode
+ */
+function processPRDirect(prNumber: number, options: { launchOpencode?: boolean; withContext?: boolean }): void {
+  // Check GitHub auth
+  if (!github.isAuthenticated()) {
+    console.error("Error: Not authenticated with GitHub CLI. Run 'gh auth login' first.");
+    process.exit(1);
+  }
+
+  // Fetch PR
+  const pr = github.fetchPR(prNumber);
+  if (!pr) {
+    console.error(`Error: PR #${prNumber} not found.`);
+    process.exit(1);
+  }
+
+  // Get branch name from PR
+  const branchName = github.branchFromPR(pr);
+  let worktreePath: string;
+
+  // Check if worktree exists
+  if (git.worktreeExists(branchName)) {
+    worktreePath = git.worktreePath(branchName)!;
+    console.log(`Worktree already exists: ${worktreePath}`);
+  } else {
+    // Fetch the branch first to ensure it's available
+    console.log(`Fetching branch ${branchName}...`);
+    git.fetchBranch(branchName);
+    
+    // Create worktree
+    console.log(`Creating worktree for PR #${prNumber}: ${pr.title}`);
+    const result = git.createWorktree(branchName, { prNumber });
+    worktreePath = result.path;
+    console.log(`Created: ${worktreePath}`);
+
+    if (result.projectInfo.hasDatabases) {
+      console.log(`  ${result.postHooks.message}`);
+    }
+    if (result.copiedFiles.length > 0) {
+      console.log(`  Copied: ${result.copiedFiles.join(", ")}`);
+    }
+  }
+
+  // Launch OpenCode if requested
+  if (options.launchOpencode) {
+    // Load config to check for default model
+    const repoRoot = git.repoRoot();
+    const config = loadConfig(repoRoot);
+    
+    // Build opencode args
+    const opencodeArgs: string[] = [];
+    
+    // Add model if configured
+    if (config.opencodeModel) {
+      opencodeArgs.push("--model", config.opencodeModel);
+    }
+    
+    // Add prompt if context requested
+    if (options.withContext) {
+      const prompt = github.generateInitialPrompt(pr);
+      opencodeArgs.push("--prompt", prompt);
+    }
+    
+    // Change to worktree dir and launch opencode
+    process.chdir(worktreePath);
+    
+    const { spawnSync } = require("child_process");
+    spawnSync("opencode", opencodeArgs, { stdio: "inherit" });
+  }
+}
+
 // ============================================================================
 // Main Entry Point
 // ============================================================================
@@ -632,12 +710,24 @@ async function main() {
     process.exit(0);
   }
 
+  // Non-interactive: process PR directly
+  if (options.pr) {
+    processPRDirect(options.pr, {
+      launchOpencode: options.launchOpencode,
+      withContext: options.withContext,
+    });
+    process.exit(0);
+  }
+
   // ========================================================================
   // Interactive TUI mode (existing behavior)
   // ========================================================================
 
   // Check Fizzy authentication status once at startup
   fizzyAuthenticated = fizzy.isAuthenticated();
+  
+  // Check GitHub authentication status once at startup
+  githubAuthenticated = github.isAuthenticated();
 
   const renderer = await createCliRenderer({
     exitOnCtrlC: true,
@@ -663,7 +753,7 @@ async function main() {
       if (currentView === "main") {
         renderer.destroy();
         process.exit(0);
-      } else if (currentView === "fizzy-cards" || currentView === "fizzy-boards" || currentView === "fizzy-columns") {
+      } else if (currentView === "fizzy-cards" || currentView === "fizzy-boards" || currentView === "fizzy-columns" || currentView === "github-prs") {
         // Don't handle here - let the view's own handler deal with it
         return;
       } else if (currentView === "confirm") {
@@ -673,7 +763,7 @@ async function main() {
         } else {
           transitionToView(() => showMainView(renderer));
         }
-      } else if (currentView === "switch-confirm" || currentView === "delete-confirm") {
+      } else if (currentView === "switch-confirm" || currentView === "delete-confirm" || currentView === "pr-switch-confirm") {
         // Go back to main worktree list
         transitionToView(() => showMainView(renderer));
       } else {
@@ -689,6 +779,7 @@ async function main() {
 // Special marker values for non-worktree options
 const CREATE_NEW = Symbol("create-new");
 const CREATE_FROM_FIZZY = Symbol("create-from-fizzy");
+const CREATE_FROM_PR = Symbol("create-from-pr");
 
 function showMainView(renderer: CliRenderer) {
   currentView = "main";
@@ -795,6 +886,13 @@ function showMainView(renderer: CliRenderer) {
     items.push({ type: "create", action: CREATE_FROM_FIZZY, label: "From Fizzy card", desc: "Create from a task card", icon: "\uf0ae" }); // nf-fa-tasks
   } else {
     items.push({ type: "create", action: CREATE_FROM_FIZZY, label: "Auth Fizzy to pull cards", desc: "Run: fizzy auth login", icon: "\uf023" }); // nf-fa-lock
+  }
+  
+  // Only show GitHub PR option if authenticated
+  if (githubAuthenticated) {
+    items.push({ type: "create", action: CREATE_FROM_PR, label: "From GitHub PR", desc: "Review a pull request", icon: "\uf407" }); // nf-oct-git_pull_request
+  } else {
+    items.push({ type: "create", action: CREATE_FROM_PR, label: "Auth GitHub to pull PRs", desc: "Run: gh auth login", icon: "\uf023" }); // nf-fa-lock
   }
 
   // Custom list with styled tiles
@@ -1046,7 +1144,22 @@ function showMainView(renderer: CliRenderer) {
           detailContent.add(new TextRenderable(renderer, { content: "" }));
           detailContent.add(new TextRenderable(renderer, { content: "  fizzy auth login", fg: Theme.accent }));
           detailContent.add(new TextRenderable(renderer, { content: "" }));
-          detailContent.add(new TextRenderable(renderer, { content: "Then restart wt.", fg: Theme.muted }));
+          detailContent.add(new TextRenderable(renderer, { content: "Then restart hatchet.", fg: Theme.muted }));
+        }
+      } else if (item.action === CREATE_FROM_PR) {
+        if (githubAuthenticated) {
+          detailContent.add(new TextRenderable(renderer, { content: "Create from GitHub PR", fg: Theme.text }));
+          detailContent.add(new TextRenderable(renderer, { content: "" }));
+          detailContent.add(new TextRenderable(renderer, { content: "Browse open pull requests and create", fg: Theme.muted }));
+          detailContent.add(new TextRenderable(renderer, { content: "a worktree to review or work on them.", fg: Theme.muted }));
+        } else {
+          detailContent.add(new TextRenderable(renderer, { content: "GitHub Not Authenticated", fg: Theme.warning }));
+          detailContent.add(new TextRenderable(renderer, { content: "" }));
+          detailContent.add(new TextRenderable(renderer, { content: "To pull PRs from GitHub, run:", fg: Theme.muted }));
+          detailContent.add(new TextRenderable(renderer, { content: "" }));
+          detailContent.add(new TextRenderable(renderer, { content: "  gh auth login", fg: Theme.accent }));
+          detailContent.add(new TextRenderable(renderer, { content: "" }));
+          detailContent.add(new TextRenderable(renderer, { content: "Then restart hatchet.", fg: Theme.muted }));
         }
       }
     } else {
@@ -1224,6 +1337,14 @@ function showMainView(renderer: CliRenderer) {
         } else {
           transitionToView(() => showFizzyBoards(renderer));
         }
+      } else if (item.action === CREATE_FROM_PR) {
+        // Only proceed if authenticated
+        if (!githubAuthenticated) {
+          // Do nothing - user needs to run gh auth login
+          return;
+        }
+        cleanup();
+        transitionToView(() => showGitHubPRs(renderer));
       }
     } else {
       // It's a worktree - launch opencode
@@ -2190,6 +2311,853 @@ function showFizzyCards(renderer: CliRenderer, board: { id: string; name: string
   });
 
   // Register key handler
+  renderer.keyInput.on("keypress", keyHandler);
+}
+
+// ============================================================================
+// GitHub PR View
+// ============================================================================
+
+function showGitHubPRs(renderer: CliRenderer) {
+  currentView = "github-prs";
+  const root = renderer.root;
+  clearChildren(root);
+
+  // Fetch PRs
+  const allPRs = github.fetchPRs({ state: "open", limit: 50 });
+  let filteredPRs = [...allPRs];
+
+  // Main container - full screen
+  const container = new BoxRenderable(renderer, {
+    width: "100%",
+    height: "100%",
+    flexDirection: "column",
+    backgroundColor: Theme.transparent,
+  });
+
+  // Header row
+  const headerRow = new BoxRenderable(renderer, {
+    width: "100%",
+    height: 1,
+    flexDirection: "row",
+    backgroundColor: Theme.transparent,
+  });
+  headerRow.add(
+    new TextRenderable(renderer, {
+      content: `\u{1fa93} Hatchet | ${git.repoName()} | Pull Requests`,
+      fg: Theme.primary,
+    })
+  );
+  container.add(headerRow);
+  container.add(new TextRenderable(renderer, { content: "" }));
+
+  // Filter input row
+  const filterRow = new BoxRenderable(renderer, {
+    width: "100%",
+    height: 1,
+    flexDirection: "row",
+    backgroundColor: Theme.transparent,
+  });
+  filterRow.add(
+    new TextRenderable(renderer, {
+      content: "Filter: ",
+      fg: Theme.muted,
+    })
+  );
+  const filterInput = new InputRenderable(renderer, {
+    width: 40,
+    height: 1,
+    placeholder: "type to filter PRs...",
+    backgroundColor: Theme.backgroundSubtle,
+    focusedBackgroundColor: Theme.backgroundSubtle,
+    textColor: Theme.text,
+    focusedTextColor: Theme.text,
+    placeholderColor: Theme.muted,
+    cursorColor: Theme.primary,
+  });
+  filterRow.add(filterInput);
+  container.add(filterRow);
+  container.add(new TextRenderable(renderer, { content: "" }));
+
+  // Two-pane content area
+  const contentRow = new BoxRenderable(renderer, {
+    width: "100%",
+    flexGrow: 1,
+    flexDirection: "row",
+    backgroundColor: Theme.transparent,
+  });
+
+  // Left pane - PR list
+  const leftPane = new BoxRenderable(renderer, {
+    width: "40%",
+    height: "100%",
+    flexDirection: "column",
+    backgroundColor: Theme.backgroundSubtle,
+    border: true,
+    borderColor: Theme.muted,
+    paddingLeft: 1,
+    paddingRight: 1,
+    paddingTop: 1,
+    marginRight: 1,
+  });
+
+  leftPane.add(
+    new TextRenderable(renderer, {
+      content: "Pull Requests",
+      fg: Theme.accent,
+    })
+  );
+
+  // Preview pane reference
+  let previewContent: BoxRenderable;
+
+  // Function to update preview
+  function updatePreview(pr: GitHubPR | null) {
+    if (!previewContent) return;
+    clearChildren(previewContent);
+
+    if (!pr) {
+      previewContent.add(
+        new TextRenderable(renderer, {
+          content: "Select a PR to see preview",
+          fg: Theme.muted,
+        })
+      );
+      return;
+    }
+
+    // PR title
+    previewContent.add(
+      new TextRenderable(renderer, {
+        content: `#${pr.number}: ${pr.title}`,
+        fg: Theme.textBright,
+        attributes: 1, // Bold
+      })
+    );
+
+    // Status row
+    const stateColor = pr.isDraft ? Theme.muted : 
+                       pr.state === "merged" ? Theme.secondary :
+                       pr.state === "closed" ? Theme.error :
+                       Theme.success;
+    previewContent.add(
+      new TextRenderable(renderer, {
+        content: `State: ${pr.isDraft ? "Draft" : pr.state.charAt(0).toUpperCase() + pr.state.slice(1)}`,
+        fg: stateColor,
+      })
+    );
+
+    // Author and branch
+    previewContent.add(
+      new TextRenderable(renderer, {
+        content: `Author: @${pr.author}`,
+        fg: Theme.muted,
+      })
+    );
+    previewContent.add(
+      new TextRenderable(renderer, {
+        content: `Branch: ${pr.headRef} \u2192 ${pr.baseRef}`,
+        fg: Theme.muted,
+      })
+    );
+
+    // Review status
+    if (pr.reviewDecision) {
+      const reviewColor = pr.reviewDecision === "APPROVED" ? Theme.success :
+                          pr.reviewDecision === "CHANGES_REQUESTED" ? Theme.warning :
+                          Theme.muted;
+      const reviewText = pr.reviewDecision.replace(/_/g, " ").toLowerCase();
+      previewContent.add(
+        new TextRenderable(renderer, {
+          content: `Review: ${reviewText}`,
+          fg: reviewColor,
+        })
+      );
+    }
+
+    // Stats
+    if (pr.additions !== undefined && pr.deletions !== undefined) {
+      previewContent.add(new TextRenderable(renderer, { content: "" }));
+      const statsRow = new BoxRenderable(renderer, {
+        flexDirection: "row",
+        backgroundColor: Theme.transparent,
+      });
+      statsRow.add(new TextRenderable(renderer, { content: `+${pr.additions}`, fg: Theme.success }));
+      statsRow.add(new TextRenderable(renderer, { content: " / " }));
+      statsRow.add(new TextRenderable(renderer, { content: `-${pr.deletions}`, fg: Theme.error }));
+      statsRow.add(new TextRenderable(renderer, { content: ` in ${pr.changedFiles} files`, fg: Theme.muted }));
+      previewContent.add(statsRow);
+    }
+
+    // Labels
+    if (pr.labels && pr.labels.length > 0) {
+      previewContent.add(new TextRenderable(renderer, { content: "" }));
+      previewContent.add(
+        new TextRenderable(renderer, {
+          content: `Labels: ${pr.labels.join(", ")}`,
+          fg: Theme.muted,
+        })
+      );
+    }
+
+    // Description
+    if (pr.body) {
+      previewContent.add(new TextRenderable(renderer, { content: "" }));
+      previewContent.add(
+        new TextRenderable(renderer, {
+          content: "Description",
+          fg: Theme.accent,
+          attributes: 1,
+        })
+      );
+      // Truncate description to first few lines
+      const lines = pr.body.split("\n").slice(0, 10);
+      for (const line of lines) {
+        previewContent.add(
+          new TextRenderable(renderer, {
+            content: line,
+            fg: Theme.text,
+          })
+        );
+      }
+      if (pr.body.split("\n").length > 10) {
+        previewContent.add(
+          new TextRenderable(renderer, {
+            content: "...",
+            fg: Theme.muted,
+          })
+        );
+      }
+    }
+  }
+
+  // Custom key handler for pane switching and navigation
+  let focusedPane: "filter" | "list" = "list";
+
+  const keyHandler = (key: { name: string }) => {
+    if (currentView !== "github-prs" || isTransitioning) return;
+
+    if (key.name === "tab") {
+      if (focusedPane === "list") {
+        focusedPane = "filter";
+        filterInput.focus();
+      } else {
+        focusedPane = "list";
+        filterInput.blur();
+      }
+    } else if (key.name === "/" && focusedPane === "list") {
+      focusedPane = "filter";
+      filterInput.focus();
+      setTimeout(() => {
+        if (filterInput.value === "/") {
+          filterInput.value = "";
+        } else if (filterInput.value.endsWith("/")) {
+          filterInput.value = filterInput.value.slice(0, -1);
+        }
+      }, 0);
+    } else if (key.name === "escape") {
+      if (focusedPane === "filter") {
+        focusedPane = "list";
+        filterInput.blur();
+      } else {
+        renderer.keyInput.off("keypress", keyHandler);
+        transitionToView(() => showMainView(renderer));
+      }
+    } else if (key.name === "return" || key.name === "enter") {
+      if (focusedPane === "filter") {
+        focusedPane = "list";
+        filterInput.blur();
+      } else {
+        selectCurrentPR();
+      }
+    } else if (focusedPane === "list") {
+      if (key.name === "j" || key.name === "down") {
+        updateSelection(selectedIndex + 1);
+      } else if (key.name === "k" || key.name === "up") {
+        updateSelection(selectedIndex - 1);
+      }
+    }
+  };
+
+  // PR list state
+  let selectedIndex = 0;
+  let prScrollBox: ScrollBoxRenderable | null = null;
+  let prTiles: BoxRenderable[] = [];
+  let backTileTextRenderable: TextRenderable | null = null;
+  let backTile: BoxRenderable | null = null;
+
+  // Function to build PR list
+  function buildPRList() {
+    if (prScrollBox) {
+      leftPane.remove(prScrollBox.id);
+      prScrollBox.destroyRecursively();
+    }
+    prTiles = [];
+
+    prScrollBox = new ScrollBoxRenderable(renderer, {
+      width: "100%",
+      flexGrow: 1,
+      backgroundColor: Theme.transparent,
+    });
+
+    // Add PR tiles
+    filteredPRs.forEach((pr, index) => {
+      const tile = createPRTile(renderer, {
+        pr,
+        selected: index === selectedIndex,
+        width: "100%",
+      });
+      prTiles.push(tile);
+      prScrollBox!.add(tile);
+    });
+
+    // Add back option
+    backTile = new BoxRenderable(renderer, {
+      width: "100%",
+      flexDirection: "row",
+      border: true,
+      borderColor: selectedIndex === filteredPRs.length ? Theme.accent : Theme.muted,
+      borderStyle: "rounded",
+      backgroundColor: Theme.backgroundSubtle,
+      paddingLeft: 1,
+      paddingRight: 1,
+      marginBottom: 0,
+    });
+    backTileTextRenderable = new TextRenderable(renderer, {
+      content: "\u2190 Back to main view",
+      fg: selectedIndex === filteredPRs.length ? Theme.accent : Theme.text,
+    });
+    backTile.add(backTileTextRenderable);
+    prTiles.push(backTile);
+    prScrollBox.add(backTile);
+
+    leftPane.add(prScrollBox);
+
+    // Update preview
+    if (filteredPRs.length > 0 && selectedIndex < filteredPRs.length) {
+      updatePreview(filteredPRs[selectedIndex]);
+    } else {
+      updatePreview(null);
+    }
+  }
+
+  // Update selection
+  function updateSelection(newIndex: number) {
+    const totalItems = filteredPRs.length + 1;
+    const oldIndex = selectedIndex;
+    selectedIndex = wrapIndex(newIndex, totalItems);
+
+    // Update styles
+    if (oldIndex >= 0 && oldIndex < prTiles.length) {
+      if (oldIndex < filteredPRs.length) {
+        prTiles[oldIndex].borderColor = Theme.muted;
+      } else if (backTile && backTileTextRenderable) {
+        backTile.borderColor = Theme.muted;
+        backTileTextRenderable.fg = Theme.text;
+      }
+    }
+
+    if (selectedIndex >= 0 && selectedIndex < prTiles.length) {
+      if (selectedIndex < filteredPRs.length) {
+        const pr = filteredPRs[selectedIndex];
+        const stateColor = pr.isDraft ? Theme.muted : 
+                          pr.state === "merged" ? Theme.secondary :
+                          pr.state === "closed" ? Theme.error :
+                          Theme.success;
+        prTiles[selectedIndex].borderColor = stateColor;
+      } else if (backTile && backTileTextRenderable) {
+        backTile.borderColor = Theme.accent;
+        backTileTextRenderable.fg = Theme.accent;
+      }
+    }
+
+    // Update preview
+    if (selectedIndex < filteredPRs.length) {
+      updatePreview(filteredPRs[selectedIndex]);
+    } else {
+      updatePreview(null);
+    }
+
+    scrollToSelected();
+  }
+
+  function scrollToSelected() {
+    if (!prScrollBox || prTiles.length === 0 || selectedIndex >= prTiles.length) return;
+
+    const contentHeight = prScrollBox.scrollHeight;
+    const numTiles = prTiles.length;
+    const avgTileHeight = contentHeight / numTiles;
+
+    const tileTop = selectedIndex * avgTileHeight;
+    const tileBottom = tileTop + avgTileHeight;
+
+    const viewportHeight = prScrollBox.viewport.height;
+    const currentScroll = prScrollBox.scrollTop;
+
+    if (tileTop < currentScroll) {
+      prScrollBox.scrollTop = tileTop;
+    } else if (tileBottom > currentScroll + viewportHeight) {
+      prScrollBox.scrollTop = tileBottom - viewportHeight;
+    }
+  }
+
+  function selectCurrentPR() {
+    if (selectedIndex === filteredPRs.length) {
+      renderer.keyInput.off("keypress", keyHandler);
+      showMainView(renderer);
+    } else if (selectedIndex < filteredPRs.length) {
+      renderer.keyInput.off("keypress", keyHandler);
+      createWorktreeFromPR(renderer, filteredPRs[selectedIndex]);
+    }
+  }
+
+  // Right pane - preview
+  const rightPane = new BoxRenderable(renderer, {
+    width: "60%",
+    height: "100%",
+    flexDirection: "column",
+    backgroundColor: Theme.backgroundSubtle,
+    border: true,
+    borderColor: Theme.muted,
+    paddingLeft: 1,
+    paddingRight: 1,
+    paddingTop: 1,
+  });
+
+  rightPane.add(
+    new TextRenderable(renderer, {
+      content: "Preview",
+      fg: Theme.accent,
+    })
+  );
+  rightPane.add(new TextRenderable(renderer, { content: "" }));
+
+  previewContent = new BoxRenderable(renderer, {
+    width: "100%",
+    flexGrow: 1,
+    flexDirection: "column",
+    backgroundColor: Theme.transparent,
+  });
+  rightPane.add(previewContent);
+
+  // Handle empty state
+  if (allPRs.length === 0) {
+    leftPane.add(
+      new TextRenderable(renderer, {
+        content: "No open pull requests found.",
+        fg: Theme.warning,
+      })
+    );
+  } else {
+    buildPRList();
+  }
+
+  contentRow.add(leftPane);
+  contentRow.add(rightPane);
+  container.add(contentRow);
+
+  // Status bar
+  container.add(new TextRenderable(renderer, { content: "" }));
+  container.add(
+    new TextRenderable(renderer, {
+      content: "/ filter  j/k navigate  enter select  esc back  tab switch pane",
+      fg: Theme.muted,
+    })
+  );
+
+  root.add(container);
+
+  // Filter input handler
+  filterInput.on(InputRenderableEvents.INPUT, () => {
+    const query = filterInput.value.toLowerCase();
+    if (query === "") {
+      filteredPRs = [...allPRs];
+    } else {
+      filteredPRs = allPRs.filter(
+        (pr) =>
+          pr.title.toLowerCase().includes(query) ||
+          pr.number.toString().includes(query) ||
+          pr.author.toLowerCase().includes(query) ||
+          pr.headRef.toLowerCase().includes(query) ||
+          (pr.body || "").toLowerCase().includes(query) ||
+          (pr.labels || []).some(label => label.toLowerCase().includes(query))
+      );
+    }
+    selectedIndex = 0;
+    buildPRList();
+  });
+
+  // Register key handler
+  renderer.keyInput.on("keypress", keyHandler);
+}
+
+function createWorktreeFromPR(renderer: CliRenderer, pr: GitHubPR) {
+  try {
+    // Get branch name from PR
+    const branchName = github.branchFromPR(pr);
+
+    // Check if worktree already exists
+    if (git.worktreeExists(branchName)) {
+      const existingPath = git.worktreePath(branchName);
+      if (existingPath) {
+        lastCreatedBranch = branchName;
+        showPRWorktreeExistsPrompt(renderer, pr, branchName, existingPath);
+        return;
+      }
+    }
+
+    // Fetch the branch first
+    git.fetchBranch(branchName);
+
+    // Create new worktree with PR number in folder name
+    const result = git.createWorktree(branchName, { prNumber: pr.number });
+    lastCreatedBranch = result.branch;
+    if (result.projectInfo.hasDatabases) {
+      console.log(`Project: ${result.projectInfo.type}, hooks: ${result.postHooks.message}`);
+    }
+    showMainView(renderer);
+  } catch (error) {
+    showMainView(renderer);
+  }
+}
+
+function showPRWorktreeExistsPrompt(
+  renderer: CliRenderer,
+  pr: GitHubPR,
+  branchName: string,
+  existingPath: string
+) {
+  currentView = "confirm";
+  const root = renderer.root;
+  clearChildren(root);
+
+  const container = new BoxRenderable(renderer, {
+    width: "100%",
+    height: "100%",
+    flexDirection: "column",
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: Theme.transparent,
+  });
+
+  const modal = new BoxRenderable(renderer, {
+    width: 55,
+    flexDirection: "column",
+    alignItems: "center",
+    backgroundColor: Theme.backgroundSubtle,
+    border: true,
+    borderColor: Theme.warning,
+    borderStyle: "rounded",
+    paddingTop: 1,
+    paddingBottom: 1,
+    paddingLeft: 2,
+    paddingRight: 2,
+  });
+
+  modal.add(
+    new TextRenderable(renderer, {
+      content: "Worktree Already Exists",
+      fg: Theme.warning,
+    })
+  );
+  modal.add(new TextRenderable(renderer, { content: "" }));
+
+  modal.add(
+    new TextRenderable(renderer, {
+      content: `PR #${pr.number}: ${pr.title.slice(0, 40)}${pr.title.length > 40 ? "..." : ""}`,
+      fg: Theme.text,
+    })
+  );
+  modal.add(
+    new TextRenderable(renderer, {
+      content: existingPath.replace(process.env.HOME || "", "~"),
+      fg: Theme.muted,
+    })
+  );
+  modal.add(new TextRenderable(renderer, { content: "" }));
+
+  let selectedIndex = 0;
+  const buttonGroup = createButtonGroup(renderer, [
+    { label: "Cancel" },
+    { label: "Recreate", selectedBg: Theme.warning, selectedBorder: Theme.warning },
+  ]);
+  modal.add(buttonGroup.container);
+
+  const keyHandler = (key: { name?: string }) => {
+    if (currentView !== "confirm" || isTransitioning) return;
+
+    if (key.name === "left" || key.name === "right" || key.name === "h" || key.name === "l" || key.name === "tab") {
+      selectedIndex = selectedIndex === 0 ? 1 : 0;
+      buttonGroup.updateSelection(selectedIndex);
+    } else if (key.name === "return" || key.name === "enter") {
+      renderer.keyInput.off("keypress", keyHandler);
+      if (selectedIndex === 1) {
+        try {
+          git.removeWorktree(branchName);
+          git.fetchBranch(branchName);
+          const result = git.createWorktree(branchName, { prNumber: pr.number });
+          if (result.projectInfo.hasDatabases) {
+            console.log(`Recreated with hooks: ${result.postHooks.message}`);
+          }
+        } catch {
+          // Ignore errors
+        }
+      }
+      transitionToView(() => showMainView(renderer));
+    } else if (key.name === "escape") {
+      renderer.keyInput.off("keypress", keyHandler);
+      transitionToView(() => showMainView(renderer));
+    }
+  };
+  renderer.keyInput.on("keypress", keyHandler);
+
+  modal.add(new TextRenderable(renderer, { content: "" }));
+  modal.add(
+    new TextRenderable(renderer, {
+      content: "\u2190/\u2192 select  enter confirm  esc cancel",
+      fg: Theme.muted,
+    })
+  );
+
+  container.add(modal);
+  root.add(container);
+}
+
+function showPRSwitchWithContextPrompt(
+  renderer: CliRenderer,
+  worktreePath: string,
+  pr: GitHubPR,
+  newWindow: boolean = false
+) {
+  currentView = "pr-switch-confirm";
+  const root = renderer.root;
+  clearChildren(root);
+
+  type ContextOption = { type: "with-context" } | { type: "without-context" } | { type: "back" };
+  const items: ContextOption[] = [
+    { type: "with-context" },
+    { type: "without-context" },
+    { type: "back" },
+  ];
+
+  const container = new BoxRenderable(renderer, {
+    width: "100%",
+    height: "100%",
+    flexDirection: "column",
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: Theme.transparent,
+  });
+
+  const modal = new BoxRenderable(renderer, {
+    width: 55,
+    flexDirection: "column",
+    backgroundColor: Theme.backgroundSubtle,
+    border: true,
+    borderColor: Theme.muted,
+    borderStyle: "rounded",
+    paddingTop: 1,
+    paddingBottom: 1,
+    paddingLeft: 2,
+    paddingRight: 2,
+  });
+
+  const headerRow = new BoxRenderable(renderer, {
+    width: "100%",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    backgroundColor: Theme.transparent,
+    marginBottom: 1,
+  });
+  headerRow.add(new TextRenderable(renderer, {
+    content: "GitHub PR Detected",
+    fg: Theme.accent,
+  }));
+  headerRow.add(new TextRenderable(renderer, {
+    content: git.repoName(),
+    fg: Theme.muted,
+  }));
+  modal.add(headerRow);
+
+  // PR tile
+  const prTile = createPRTile(renderer, {
+    pr,
+    selected: true,
+    width: "100%",
+  });
+  modal.add(prTile);
+  modal.add(new TextRenderable(renderer, { content: "" }));
+
+  const tilesContainer = new BoxRenderable(renderer, {
+    width: "100%",
+    flexDirection: "column",
+    backgroundColor: Theme.transparent,
+  });
+  modal.add(tilesContainer);
+
+  let selectedIndex = 0;
+  const tiles: BoxRenderable[] = [];
+
+  const getIncludeContext = () => items[selectedIndex].type === "with-context";
+
+  const createOptionTile = (item: ContextOption, selected: boolean): BoxRenderable => {
+    if (item.type === "with-context") {
+      const tile = new BoxRenderable(renderer, {
+        width: "100%",
+        flexDirection: "column",
+        border: true,
+        borderColor: selected ? Theme.accent : Theme.muted,
+        borderStyle: "rounded",
+        backgroundColor: Theme.transparent,
+        paddingLeft: 1,
+        paddingRight: 1,
+        marginBottom: 1,
+      });
+      tile.add(new TextRenderable(renderer, {
+        content: "\uf075  With PR context",
+        fg: selected ? Theme.textBright : Theme.text,
+      }));
+      tile.add(new TextRenderable(renderer, {
+        content: "Include PR details in OpenCode prompt",
+        fg: Theme.muted,
+      }));
+      return tile;
+    } else if (item.type === "without-context") {
+      const tile = new BoxRenderable(renderer, {
+        width: "100%",
+        flexDirection: "column",
+        border: true,
+        borderColor: selected ? Theme.accent : Theme.muted,
+        borderStyle: "rounded",
+        backgroundColor: Theme.transparent,
+        paddingLeft: 1,
+        paddingRight: 1,
+        marginBottom: 1,
+      });
+      tile.add(new TextRenderable(renderer, {
+        content: "\uf054  Without context",
+        fg: selected ? Theme.textBright : Theme.text,
+      }));
+      tile.add(new TextRenderable(renderer, {
+        content: "Just open the worktree",
+        fg: Theme.muted,
+      }));
+      return tile;
+    } else {
+      const tile = new BoxRenderable(renderer, {
+        width: "100%",
+        flexDirection: "row",
+        border: true,
+        borderColor: selected ? Theme.accent : Theme.muted,
+        borderStyle: "rounded",
+        backgroundColor: Theme.transparent,
+        paddingLeft: 1,
+        paddingRight: 1,
+      });
+      tile.add(new TextRenderable(renderer, {
+        content: "\u2190 Back",
+        fg: selected ? Theme.accent : Theme.muted,
+      }));
+      return tile;
+    }
+  };
+
+  let isRebuilding = false;
+  const rebuildTiles = () => {
+    if (isRebuilding) return;
+    isRebuilding = true;
+
+    for (const tile of tiles) {
+      tilesContainer.remove(tile.id);
+      tile.destroyRecursively();
+    }
+    tiles.length = 0;
+
+    items.forEach((item, index) => {
+      const tile = createOptionTile(item, index === selectedIndex);
+      tiles.push(tile);
+      tilesContainer.add(tile);
+    });
+
+    isRebuilding = false;
+  };
+
+  rebuildTiles();
+
+  modal.add(new TextRenderable(renderer, { content: "" }));
+  modal.add(new TextRenderable(renderer, {
+    content: "j/k navigate  enter confirm  esc back",
+    fg: Theme.muted,
+  }));
+
+  container.add(modal);
+  root.add(container);
+
+  const keyHandler = (key: { name?: string; shift?: boolean }) => {
+    if (currentView !== "pr-switch-confirm" || isTransitioning) return;
+
+    const keyNewWindow = key.shift === true;
+
+    if (key.name === "j" || key.name === "down") {
+      if (selectedIndex < items.length - 1) {
+        selectedIndex++;
+        rebuildTiles();
+      }
+    } else if (key.name === "k" || key.name === "up") {
+      if (selectedIndex > 0) {
+        selectedIndex--;
+        rebuildTiles();
+      }
+    } else if (key.name === "return" || key.name === "enter") {
+      renderer.keyInput.off("keypress", keyHandler);
+      const item = items[selectedIndex];
+
+      transitionToView(() => {
+        if (item.type === "back") {
+          showMainView(renderer);
+        } else {
+          const prompt = getIncludeContext() ? github.generateInitialPrompt(pr) : undefined;
+          if (newWindow) {
+            launchOpenCodeInNewWindow(renderer, worktreePath, prompt);
+            showMainView(renderer);
+          } else {
+            launchOpenCode(renderer, worktreePath, prompt);
+          }
+        }
+      });
+    } else if (key.name === "escape") {
+      renderer.keyInput.off("keypress", keyHandler);
+      transitionToView(() => showMainView(renderer));
+    } else if (key.name === "c" || key.name === "C") {
+      const prompt = getIncludeContext() ? github.generateInitialPrompt(pr) : undefined;
+      if (keyNewWindow) {
+        launchOpenCodeInNewWindow(renderer, worktreePath, prompt);
+        renderer.keyInput.off("keypress", keyHandler);
+        showMainView(renderer);
+      } else {
+        renderer.keyInput.off("keypress", keyHandler);
+        launchOpenCode(renderer, worktreePath, prompt);
+      }
+    } else if (key.name === "n" || key.name === "N") {
+      if (keyNewWindow) {
+        launchNvim(renderer, worktreePath);
+        renderer.keyInput.off("keypress", keyHandler);
+        showMainView(renderer);
+      } else {
+        renderer.keyInput.off("keypress", keyHandler);
+        launchNvimInPlace(renderer, worktreePath);
+      }
+    } else if (key.name === "t" || key.name === "T") {
+      if (keyNewWindow) {
+        launchTerminal(renderer, worktreePath);
+        renderer.keyInput.off("keypress", keyHandler);
+        showMainView(renderer);
+      } else {
+        renderer.keyInput.off("keypress", keyHandler);
+        launchShellInPlace(renderer, worktreePath);
+      }
+    }
+  };
   renderer.keyInput.on("keypress", keyHandler);
 }
 

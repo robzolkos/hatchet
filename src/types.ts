@@ -59,3 +59,22 @@ export interface FizzyStep {
   content: string;
   completed: boolean;
 }
+
+export interface GitHubPR {
+  number: number;
+  title: string;
+  state: "open" | "closed" | "merged";
+  headRef: string;        // Branch name
+  headSha: string;        // Short SHA
+  baseRef: string;        // Target branch (main, etc.)
+  author: string;
+  createdAt: string;
+  updatedAt: string;
+  body?: string;
+  labels?: string[];
+  reviewDecision?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
+  isDraft: boolean;
+  additions?: number;
+  deletions?: number;
+  changedFiles?: number;
+}

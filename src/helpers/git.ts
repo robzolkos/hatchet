@@ -135,7 +135,12 @@ export interface CreateWorktreeResult {
   copiedFiles: string[];
 }
 
-export function createWorktree(branch: string): CreateWorktreeResult {
+export interface CreateWorktreeOptions {
+  /** PR number to include in folder name (e.g., repo.pr-123-branch-name) */
+  prNumber?: number;
+}
+
+export function createWorktree(branch: string, options?: CreateWorktreeOptions): CreateWorktreeResult {
   clearCache();
 
   const sanitized = sanitizeBranch(branch);
@@ -144,7 +149,11 @@ export function createWorktree(branch: string): CreateWorktreeResult {
   const parentDir = path.dirname(root);
   // Convert slashes to dashes for folder name (e.g., feature/asdf -> feature-asdf)
   const folderSuffix = sanitized.replace(/\//g, "-");
-  const worktreeDir = path.join(parentDir, `${name}.${folderSuffix}`);
+  // Include PR number in folder name if provided (e.g., repo.pr-123-branch-name)
+  const folderName = options?.prNumber 
+    ? `${name}.pr-${options.prNumber}-${folderSuffix}`
+    : `${name}.${folderSuffix}`;
+  const worktreeDir = path.join(parentDir, folderName);
 
   // Check if branch exists remotely
   let branchExists = false;
@@ -276,6 +285,48 @@ export function removeWorktree(branch: string, deleteBranch = false): void {
   }
 
   clearCache();
+}
+
+/**
+ * Fetch a specific branch from origin.
+ * Useful for PR branches that may not be locally available yet.
+ */
+export function fetchBranch(branch: string): boolean {
+  try {
+    execSync(`git fetch origin ${branch}`, {
+      cwd: repoRoot(),
+      stdio: "pipe",
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Check if a branch exists locally or remotely
+ */
+export function branchExists(branch: string): boolean {
+  const sanitized = sanitizeBranch(branch);
+  const root = repoRoot();
+  
+  try {
+    execSync(`git show-ref --verify --quiet refs/heads/${sanitized}`, {
+      cwd: root,
+      stdio: "pipe",
+    });
+    return true;
+  } catch {
+    try {
+      execSync(`git show-ref --verify --quiet refs/remotes/origin/${sanitized}`, {
+        cwd: root,
+        stdio: "pipe",
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
 }
 
 export function defaultBranch(): string {

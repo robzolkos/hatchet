@@ -12,6 +12,8 @@ This document contains important patterns and conventions for developing the `ha
 - `src/helpers/image.ts` - Image extraction and placeholders
 - `src/helpers/terminal.ts` - Terminal launcher utilities
 - `src/helpers/card-tile.ts` - Fizzy card tile component
+- `src/helpers/pr-tile.ts` - GitHub PR tile component
+- `src/helpers/github.ts` - GitHub PR integration (uses gh CLI)
 - `src/helpers/config.ts` - Configuration file loading
 - `src/helpers/cli.ts` - CLI argument parsing (yargs)
 - `src/helpers/protocol-handler.ts` - Protocol handler installation logic
@@ -136,9 +138,10 @@ hatchet [options]
 
 Options:
   -c, --card <number>    Fizzy card number to create/switch worktree for
+      --pr <number>      GitHub PR number to create/switch worktree for
   -p, --path <dir>       Path to git repository (required for protocol handler)
   -o, --launch-opencode  Launch OpenCode in the worktree after creation
-      --with-context     Include card context in OpenCode prompt (requires -o)
+      --with-context     Include card/PR context in OpenCode prompt (requires -o)
   -l, --list             List worktrees and exit
       --install-handler  Install hatchet:// protocol handler (Linux)
   -h, --help             Show help
@@ -154,13 +157,18 @@ hatchet
 # Create/switch to worktree for card #123
 hatchet --card 123
 
+# Create/switch to worktree for PR #456
+hatchet --pr 456
+
 # Create worktree and launch OpenCode
 hatchet --card 123 --launch-opencode
 hatchet -c 123 -o
+hatchet --pr 456 -o
 
-# Create worktree and launch OpenCode with card context in prompt
+# Create worktree and launch OpenCode with card/PR context in prompt
 hatchet --card 123 --launch-opencode --with-context
 hatchet -c 123 -o --with-context
+hatchet --pr 456 -o --with-context
 
 # Work with a specific repo (useful for protocol handler)
 hatchet --card 123 --path /home/user/myproject --launch-opencode
@@ -189,32 +197,42 @@ This creates a `.desktop` file and registers Hatchet as the handler for `hatchet
 
 ```
 hatchet://card/<number>?path=<repo-path>&launch-opencode=true&with-context=true
+hatchet://pr/<number>?path=<repo-path>&launch-opencode=true&with-context=true
 ```
 
 **Parameters:**
-- `card/<number>` - The Fizzy card number (required)
+- `card/<number>` - The Fizzy card number (for card URLs)
+- `pr/<number>` - The GitHub PR number (for PR URLs)
 - `path` - Absolute path to the git repository (required)
 - `launch-opencode` - Set to `true` to launch OpenCode after creation
-- `with-context` - Set to `true` to include card details in OpenCode prompt
+- `with-context` - Set to `true` to include card/PR details in OpenCode prompt
 
 ### URL Examples
 
 ```
-# Just create/switch to worktree
+# Just create/switch to worktree for a card
 hatchet://card/123?path=/home/user/myproject
+
+# Create worktree for a PR
+hatchet://pr/456?path=/home/user/myproject
 
 # Create and launch OpenCode
 hatchet://card/123?path=/home/user/myproject&launch-opencode=true
+hatchet://pr/456?path=/home/user/myproject&launch-opencode=true
 
-# Create, launch OpenCode, and include card context
+# Create, launch OpenCode, and include context
 hatchet://card/123?path=/home/user/myproject&launch-opencode=true&with-context=true
+hatchet://pr/456?path=/home/user/myproject&launch-opencode=true&with-context=true
 ```
 
 ### Testing
 
 ```bash
-# Test the protocol handler
+# Test the protocol handler with a card
 xdg-open 'hatchet://card/123?path=/home/user/myproject'
+
+# Test the protocol handler with a PR
+xdg-open 'hatchet://pr/456?path=/home/user/myproject'
 ```
 
 ### Integration with Fizzy

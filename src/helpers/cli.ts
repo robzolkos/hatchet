@@ -6,6 +6,7 @@ import { hideBin } from "yargs/helpers";
 
 export interface CliOptions {
   card?: number;
+  pr?: number;
   path?: string;
   launchOpencode?: boolean;
   withContext?: boolean;
@@ -16,9 +17,10 @@ export interface CliOptions {
 
 /**
  * Parse protocol URL: hatchet://card/123?path=/foo&launch-opencode=true&with-context=true
+ *                  or hatchet://pr/123?path=/foo&launch-opencode=true&with-context=true
  * 
- * URL structure: hatchet://card/123?path=/foo&launch-opencode=true&with-context=true
- * - hostname = "card"
+ * URL structure: hatchet://<type>/123?path=/foo&launch-opencode=true&with-context=true
+ * - hostname = "card" or "pr"
  * - pathname = "/123"
  * - searchParams = { path: "/foo", "launch-opencode": "true", "with-context": "true" }
  */
@@ -28,12 +30,18 @@ export function parseProtocolUrl(url: string): Partial<CliOptions> {
     const options: Partial<CliOptions> = {};
 
     // hatchet://card/123 -> hostname="card", pathname="/123"
-    // Parse card number from the combination of hostname and pathname
+    // hatchet://pr/123 -> hostname="pr", pathname="/123"
     if (parsed.hostname === "card") {
       const cardPath = parsed.pathname.replace(/^\/+/, "");
       const cardNum = parseInt(cardPath, 10);
       if (!isNaN(cardNum)) {
         options.card = cardNum;
+      }
+    } else if (parsed.hostname === "pr") {
+      const prPath = parsed.pathname.replace(/^\/+/, "");
+      const prNum = parseInt(prPath, 10);
+      if (!isNaN(prNum)) {
+        options.pr = prNum;
       }
     }
 
@@ -68,6 +76,7 @@ export async function parseArgs(): Promise<CliOptions> {
     .usage("Examples:")
     .usage("  $0                                    Launch TUI")
     .usage("  $0 --card 123 --path /path/to/repo    Create worktree for card #123")
+    .usage("  $0 --pr 456                           Create worktree for PR #456")
     .usage("  $0 -c 123 -o                          Create and launch OpenCode")
     .usage("  $0 -c 123 -o --with-context           Include card context in prompt")
     .usage("  $0 --list                             List all worktrees")
@@ -75,6 +84,10 @@ export async function parseArgs(): Promise<CliOptions> {
       alias: "c",
       type: "number",
       describe: "Fizzy card number to create/switch worktree for",
+    })
+    .option("pr", {
+      type: "number",
+      describe: "GitHub PR number to create/switch worktree for",
     })
     .option("path", {
       alias: "p",
@@ -117,6 +130,7 @@ export async function parseArgs(): Promise<CliOptions> {
 
   let options: CliOptions = {
     card: argv.card,
+    pr: argv.pr,
     path: argv.path,
     launchOpencode: argv.launchOpencode,
     withContext: argv.withContext,
